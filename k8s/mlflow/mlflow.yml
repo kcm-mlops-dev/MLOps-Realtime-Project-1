@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  labels:
+    app: mlflow
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      containers:
+      - name: mlflow
+        image: ghcr.io/mlflow/mlflow:v3.10.0
+        imagePullPolicy: IfNotPresent
+        ports:
+          - containerPort: 5000
+
+        env:
+          - name: BACKEND_STORE_URI
+            valueFrom:
+              secretKeyRef:
+                name: mlflow-secrets
+                key: postgres-uri
+
+          - name: ARTIFACT_ROOT
+            value: wasbs://mlflow@$(AZURE_STORAGE_ACCOUNT).blob.core.windows.net/
+
+          - name: AZURE_STORAGE_ACCOUNT
+            valueFrom:
+              secretKeyRef:
+                name: mlflow-secrets
+                key: azure-storage-account
+
+          - name: AZURE_STORAGE_KEY
+            valueFrom:
+              secretKeyRef:
+                name: mlflow-secrets
+                key: azure-storage-key
+
+        command:
+          [
+            "mlflow",
+            "server",
+            "--backend-store-uri=$(BACKEND_STORE_URI)",
+            "--default-artifact-root=$(ARTIFACT_ROOT)",
+            "--host=0.0.0.0",
+            "--port=5000",
+            "--workers=2"
+          ]
+
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
