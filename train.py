@@ -1,60 +1,114 @@
-"""Train churn prediction model"""
-import pandas as pd
+"""Train churn prediction model and log to MLflow."""
+from __future__ import annotations
+
+import argparse
+import os
 import pickle
+
 import mlflow
 import mlflow.sklearn
-from sklearn.model_selection import train_test_split
+import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.model_selection import train_test_split
 
-# Load data
-df = pd.read_csv('data/churn_data.csv')
 
-# Features and target
-features = ['age', 'tenure_months', 'monthly_charges', 'total_charges', 'num_support_calls']
-X = df[features]
-y = df['churn']
+def parse_args():
+    p = argparse.ArgumentParser("Simple MLflow demo (churn prediction)")
+    p.add_argument("--csv", default="data/churn_data.csv", help="Path to CSV")
+    p.add_argument("--target", default="churn", help="Target column name")
+    p.add_argument(
+        "--features",
+        default="age,tenure_months,monthly_charges,total_charges,num_support_calls",
+        help="Comma-separated feature column names",
+    )
+    p.add_argument("--experiment", default="Churn-Prediction", help="MLflow experiment name")
+    p.add_argument("--run", default="run-3", help="MLflow run name")
+    p.add_argument("--n-estimators", type=int, default=100, help="RandomForest n_estimators")
+    p.add_argument("--test-size", type=float, default=0.5, help="Test split fraction")
+    p.add_argument("--random-state", type=int, default=42, help="Random seed")
+    p.add_argument("--model-out", default="models/churn_model.pkl", help="Model output path")
+    return p.parse_args()
 
-# Split
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Train
-model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)
+def main():
+    args = parse_args()
 
-# Evaluate
-y_pred = model.predict(X_test)
-y_proba = model.predict_proba(X_test)[:, 1]
+    # Set MLflow tracking URI from env or use default
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5001")
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(args.experiment)
 
-accuracy = accuracy_score(y_test, y_pred)
-auc = roc_auc_score(y_test, y_proba)
+    # Load CSV
+    if not os.path.exists(args.csv):
+        raise SystemExit(f"CSV not found: {args.csv}")
 
-print(f"Accuracy: {accuracy:.4f}")
-print(f"AUC-ROC: {auc:.4f}")
+    df = pd.read_csv(args.csv)
 
-# MLflow tracking
-mlflow.set_tracking_uri("http://localhost:8080")
-experiment_name = "Churn-Prediction"
-mlflow.set_experiment(experiment_name)
+    if args.target not in df.columns:
+        raise SystemExit(f"Target column '{args.target}' not found in CSV. Columns: {list(df.columns)}")
 
-with mlflow.start_run():
-    mlflow.log_params({
-        "n_estimators": 100,
-        "random_state": 42
-    })
-    mlflow.log_metrics({
-        "accuracy": accuracy,
-        "auc": auc
-    })
-    mlflow.sklearn.log_model(model, "model")
+    features = [c.strip() for c in args.features.split(",") if c.strip()]
+    missing_features = [c for c in features if c not in df.columns]
+    if missing_features:
+        raise SystemExit(f"Feature columns not found in CSV: {missing_features}")
 
-    # Save model with version info in pickle
-    model_version = mlflow.active_run().info.run_id
-    model_info = {
-        "model": model,
-        "version": model_version
-    }
-    with open('models/churn_model.pkl', 'wb') as f:
-        pickle.dump(model_info, f)
+    # Prepare data
+    X = df[features]
+    y = df[args.target]
 
-print(f"Model saved to models/churn_model.pkl with version {model_version}")
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=args.test_size, random_state=args.random_state
+    )
+
+    # Train and log with MLflow
+    with mlflow.start_run(run_name=args.run) as run:
+        # Log simple params
+        mlflow.log_param("n_estimators", args.n_estimators)
+        mlflow.log_param("test_size", args.test_size)
+        mlflow.log_param("random_state", args.random_state)
+        mlflow.log_param("train_rows", len(X_train))
+        mlflow.log_param("test_rows", len(X_test))
+        mlflow.log_param("features", ",".join(features))
+
+        # Train model
+        model = RandomForestClassifier(
+            n_estimators=args.n_estimators,
+            random_state=args.random_state,
+        )
+        model.fit(X_train, y_train)
+
+        # Predict + metrics
+        y_pred = model.predict(X_test)
+        y_proba = model.predict_proba(X_test)[:, 1]
+
+        accuracy = float(accuracy_score(y_test, y_pred))
+        auc = float(roc_auc_score(y_test, y_proba))
+
+        # Log metrics
+        mlflow.log_metric("accuracy", accuracy)
+        mlflow.log_metric("auc", auc)
+        mlflow.sklearn.log_model(model, "model")
+
+        model_version = run.info.run_id
+        model_info = {
+            "model": model,
+            "version": model_version,
+        }
+
+        out_dir = os.path.dirname(args.model_out)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        with open(args.model_out, "wb") as f:
+            pickle.dump(model_info, f)
+
+        # Log saved pickle as a run artifact
+        mlflow.log_artifact(args.model_out, artifact_path="model_files")
+
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"AUC-ROC: {auc:.4f}")
+    print(f"Model saved to {args.model_out} with version {model_version}")
+
+
+if __name__ == "__main__":
+    main()
