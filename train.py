@@ -23,7 +23,7 @@ def parse_args():
         help="Comma-separated feature column names",
     )
     p.add_argument("--experiment", default="Churn-Prediction", help="MLflow experiment name")
-    p.add_argument("--run", default="run-3", help="MLflow run name")
+    p.add_argument("--run", default="run-4", help="MLflow run name")
     p.add_argument("--n-estimators", type=int, default=100, help="RandomForest n_estimators")
     p.add_argument("--test-size", type=float, default=0.5, help="Test split fraction")
     p.add_argument("--random-state", type=int, default=42, help="Random seed")
@@ -35,7 +35,7 @@ def main():
     args = parse_args()
 
     # Set MLflow tracking URI from env or use default
-    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5001")
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(args.experiment)
 
